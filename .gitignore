@@ -1,0 +1,19 @@
+# Node artifacts
+node_modules/
+**/node_modules/
+*.log
+dist/
+client/dist/
+
+# Environment files
+.env
+client/.env
+server/.env
+
+# Local tooling
+node-portable/
+node.zip
+
+# Editor junk
+.DS_Store
+Thumbs.db
