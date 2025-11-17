@@ -13,7 +13,7 @@ A lightweight classroom-response experience built for Czech teachers and student
 ## Project structure
 
 ```
-socrative-clone/
+kvizník/
 ├── server/   # Express + Socket.IO API
 └── client/   # Vite + React front-end (teacher + student panels)
 ```
