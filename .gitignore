@@ -17,3 +17,4 @@ node.zip
 # Editor junk
 .DS_Store
 Thumbs.db
+server/data/

@@ -30,7 +30,7 @@ body {
   padding: 2rem 1.5rem 4rem;
 }
 
-header {
+.site-header {
   margin-bottom: 2rem;
 }
 
@@ -307,5 +307,103 @@ input:focus {
 
   h1 {
     font-size: 2.2rem;
+  }
+}
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 2.5rem;
+}
+
+.site-nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.site-nav a {
+  font-weight: 600;
+  color: #4f46e5;
+}
+
+.site-nav a:hover {
+  text-decoration: underline;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.landing {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.hero-copy {
+  background: #fff;
+  border-radius: 1.25rem;
+  padding: 1.75rem;
+  box-shadow: 0 20px 45px rgba(93, 100, 148, 0.12);
+}
+
+.cta-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.card-panel {
+  background: #fff;
+  border-radius: 1.25rem;
+  padding: 1.5rem;
+  box-shadow: 0 12px 30px rgba(93, 100, 148, 0.12);
+}
+
+.teacher-panel .teacher-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.attach-form {
+  background: #fff;
+  border-radius: 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.attach-row {
+  display: flex;
+  gap: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .site-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .attach-row {
+    flex-direction: column;
+  }
+
+  .site-nav {
+    width: 100%;
+    justify-content: space-between;
   }
 }

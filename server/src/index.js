@@ -4,7 +4,15 @@ const http = require('http');
 const { Server } = require('socket.io');
 const { randomUUID } = require('crypto');
 
-const PORT = process.env.PORT || 4000;
+const config = require('./config');
+const requireAuth = require('./middleware/requireAuth');
+const { initUserStore, getUserByUsername } = require('./users/store');
+const { verifyPassword } = require('./utils/password');
+const { generateToken, verifyToken } = require('./utils/token');
+
+const PORT = config.port;
+
+initUserStore();
 
 const app = express();
 app.use(cors());
@@ -49,7 +57,13 @@ const sanitizeQuestion = (question) => {
   };
 };
 
-const serializeSession = (session) => ({
+const serializeStudentSession = (session) => ({
+  id: session.id,
+  title: session.title,
+  questions: session.questions
+});
+
+const serializeTeacherSession = (session) => ({
   id: session.id,
   title: session.title,
   questions: session.questions,
@@ -78,7 +92,7 @@ const buildSummary = (session) =>
 
 const emitUpdates = (session) => {
   io.to(session.id).emit('answersUpdated', {
-    session: serializeSession(session),
+    session: serializeTeacherSession(session),
     summary: buildSummary(session)
   });
 };
@@ -87,7 +101,25 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/sessions', (req, res) => {
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required.' });
+  }
+
+  const user = getUserByUsername(username.trim());
+  if (!user || !verifyPassword(password, user.password_hash)) {
+    return res.status(401).json({ error: 'Invalid credentials.' });
+  }
+
+  const token = generateToken({ id: user.id, username: user.username });
+  res.json({
+    token,
+    user: { id: user.id, username: user.username }
+  });
+});
+
+app.post('/api/sessions', requireAuth, (req, res) => {
   const { title, questions } = req.body;
 
   if (!title || typeof title !== 'string') {
@@ -121,9 +153,11 @@ app.post('/api/sessions', (req, res) => {
 
   sessions.set(sessionId, session);
 
-  res
-    .status(201)
-    .json({ sessionId, session: serializeSession(session), summary: buildSummary(session) });
+  res.status(201).json({
+    sessionId,
+    session: serializeTeacherSession(session),
+    summary: buildSummary(session)
+  });
 });
 
 app.get('/api/sessions/:sessionId', (req, res) => {
@@ -132,7 +166,16 @@ app.get('/api/sessions/:sessionId', (req, res) => {
     return res.status(404).json({ error: 'Session not found.' });
   }
 
-  res.json({ session: serializeSession(session), summary: buildSummary(session) });
+  res.json({ session: serializeStudentSession(session) });
+});
+
+app.get('/api/teacher/sessions/:sessionId', requireAuth, (req, res) => {
+  const session = sessions.get(req.params.sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found.' });
+  }
+
+  res.json({ session: serializeTeacherSession(session), summary: buildSummary(session) });
 });
 
 app.post('/api/sessions/:sessionId/answers', (req, res) => {
@@ -180,7 +223,7 @@ app.post('/api/sessions/:sessionId/answers', (req, res) => {
   res.json({ success: true });
 });
 
-app.delete('/api/sessions/:sessionId', (req, res) => {
+app.delete('/api/sessions/:sessionId', requireAuth, (req, res) => {
   if (!sessions.has(req.params.sessionId)) {
     return res.status(404).json({ error: 'Session not found.' });
   }
@@ -191,7 +234,19 @@ app.delete('/api/sessions/:sessionId', (req, res) => {
 });
 
 io.on('connection', (socket) => {
-  socket.on('joinSession', ({ sessionId }) => {
+  socket.on('joinSession', ({ sessionId, token }) => {
+    if (!token) {
+      socket.emit('sessionError', 'Authentication required.');
+      return;
+    }
+
+    try {
+      verifyToken(token);
+    } catch (error) {
+      socket.emit('sessionError', 'Invalid token.');
+      return;
+    }
+
     if (!sessionId || !sessions.has(sessionId)) {
       socket.emit('sessionError', 'Session not found.');
       return;
@@ -200,7 +255,7 @@ io.on('connection', (socket) => {
     socket.join(sessionId);
     const session = sessions.get(sessionId);
     socket.emit('answersUpdated', {
-      session: serializeSession(session),
+      session: serializeTeacherSession(session),
       summary: buildSummary(session)
     });
 
@@ -211,6 +266,6 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => {
-  /* eslint-disable no-console */
-  console.log(`API & realtime server listening on port ${PORT}`);
+  // eslint-disable-next-line no-console
+  console.log('API & realtime server listening on port ' + PORT);
 });

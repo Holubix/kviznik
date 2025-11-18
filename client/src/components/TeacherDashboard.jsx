@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const createQuestion = () => ({
   text: '',
@@ -16,7 +16,7 @@ const getAnswerLabel = (question, answerIndex) => {
   return question.options[answerIndex] ?? '--';
 };
 
-const TeacherDashboard = () => {
+const TeacherDashboard = ({ authToken, user, onLogout }) => {
   const [title, setTitle] = useState('');
   const [questions, setQuestions] = useState([createQuestion()]);
   const [session, setSession] = useState(null);
@@ -25,6 +25,8 @@ const TeacherDashboard = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [existingCode, setExistingCode] = useState('');
+  const [attachStatus, setAttachStatus] = useState('idle');
 
   const totalResponses = answers.length;
 
@@ -37,21 +39,43 @@ const TeacherDashboard = () => {
     [questions]
   );
 
+  const authHeaders = useMemo(
+    () => ({
+      Authorization: 'Bearer ' + authToken,
+      'Content-Type': 'application/json'
+    }),
+    [authToken]
+  );
+
+  const fetchTeacherSession = async (code) => {
+    const response = await fetch(API_BASE_URL + '/api/teacher/sessions/' + code, {
+      headers: { Authorization: 'Bearer ' + authToken }
+    });
+
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload.error || 'Unable to fetch session.');
+    }
+    setSession(payload.session);
+    setAnswers(payload.session?.answers ?? []);
+    setSummary(payload.summary ?? []);
+    setSuccessMessage('Session synced. Students can now join with code ' + payload.session.id + '.');
+  };
+
   useEffect(() => {
-    if (!session?.id) {
+    if (!session?.id || !authToken) {
       return undefined;
     }
 
     const socket = io(API_BASE_URL, {
       transports: ['websocket'],
-      autoConnect: true
+      auth: { token: authToken }
     });
 
-    socket.emit('joinSession', { sessionId: session.id });
+    socket.emit('joinSession', { sessionId: session.id, token: authToken });
     socket.on('answersUpdated', (payload) => {
-      setSession((previous) =>
-        previous ? { ...previous, ...payload.session } : payload.session
-      );
+      setSession(payload.session);
       setAnswers(payload.session?.answers ?? []);
       setSummary(payload.summary ?? []);
     });
@@ -67,7 +91,7 @@ const TeacherDashboard = () => {
     return () => {
       socket.disconnect();
     };
-  }, [session?.id]);
+  }, [session?.id, authToken]);
 
   const updateQuestionText = (index, text) => {
     setQuestions((previous) => {
@@ -151,27 +175,24 @@ const TeacherDashboard = () => {
 
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/sessions`, {
+      const response = await fetch(API_BASE_URL + '/api/sessions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           title: title.trim() || 'Quick Quiz',
           questions: formattedQuestions
         })
       });
 
+      const payload = await response.json();
+
       if (!response.ok) {
-        const payload = await response.json();
         throw new Error(payload.error || 'Could not create session.');
       }
-
-      const payload = await response.json();
       setSession(payload.session);
       setAnswers(payload.session?.answers ?? []);
       setSummary(payload.summary ?? []);
-      setSuccessMessage(
-        `Session created! Share the code ${payload.session.id} with your students.`
-      );
+      setSuccessMessage('Session ready! Share the code ' + payload.session.id + ' with students.');
     } catch (createError) {
       setError(createError.message);
     } finally {
@@ -179,14 +200,43 @@ const TeacherDashboard = () => {
     }
   };
 
+  const handleAttachSession = async (event) => {
+    event.preventDefault();
+    setError('');
+    setSuccessMessage('');
+
+    if (!existingCode.trim()) {
+      setError('Enter a session code to monitor.');
+      return;
+    }
+
+    setAttachStatus('loading');
+    try {
+      await fetchTeacherSession(existingCode.trim());
+      setAttachStatus('ready');
+    } catch (attachError) {
+      setAttachStatus('idle');
+      setError(attachError.message);
+    }
+  };
+
+  if (!authToken) {
+    return null;
+  }
+
   return (
-    <div className="panel">
+    <div className="panel teacher-panel">
       <div className="panel-header">
         <div>
           <p className="eyebrow">Teacher</p>
-          <h2>Create & Monitor</h2>
+          <h2>Manage sessions</h2>
         </div>
-        {session?.id ? <span className="status success">Live</span> : null}
+        <div className="teacher-meta">
+          <span>{user?.username}</span>
+          <button type="button" className="secondary-button" onClick={onLogout}>
+            Log out
+          </button>
+        </div>
       </div>
 
       <form className="stack" onSubmit={handleCreateSession}>
@@ -212,11 +262,9 @@ const TeacherDashboard = () => {
           </div>
 
           {questions.map((question, questionIndex) => (
-            <div className="question-card stack" key={`question-${questionIndex}`}>
+            <div className="question-card stack" key={'question-' + questionIndex}>
               <div className="question-card-header">
-                <strong>
-                  Question {questionIndex + 1}
-                </strong>
+                <strong>Question {questionIndex + 1}</strong>
                 {questions.length > 1 ? (
                   <button
                     type="button"
@@ -236,13 +284,13 @@ const TeacherDashboard = () => {
 
               <div className="option-list stack">
                 {question.options.map((option, optionIndex) => (
-                  <div className="option-row" key={`option-${optionIndex}`}>
+                  <div className="option-row" key={'option-' + optionIndex}>
                     <input
                       value={option}
                       onChange={(event) =>
                         updateOption(questionIndex, optionIndex, event.target.value)
                       }
-                      placeholder={`Option ${optionIndex + 1}`}
+                      placeholder={'Option ' + (optionIndex + 1)}
                     />
                     {question.options.length > 2 ? (
                       <button
@@ -250,7 +298,7 @@ const TeacherDashboard = () => {
                         className="ghost-button"
                         onClick={() => removeOption(questionIndex, optionIndex)}
                       >
-                        ✕
+                        ?
                       </button>
                     ) : null}
                   </div>
@@ -274,8 +322,22 @@ const TeacherDashboard = () => {
         {successMessage ? <div className="alert success">{successMessage}</div> : null}
 
         <button type="submit" className="primary-button" disabled={loading}>
-          Launch Session
+          {session?.id ? 'Update Session' : 'Launch Session'}
         </button>
+      </form>
+
+      <form className="attach-form" onSubmit={handleAttachSession}>
+        <p className="eyebrow">Monitor an existing code</p>
+        <div className="attach-row">
+          <input
+            value={existingCode}
+            onChange={(event) => setExistingCode(event.target.value.toUpperCase())}
+            placeholder="Enter code"
+          />
+          <button type="submit" className="secondary-button" disabled={attachStatus === 'loading'}>
+            Attach
+          </button>
+        </div>
       </form>
 
       {session?.id ? (
@@ -286,7 +348,7 @@ const TeacherDashboard = () => {
               <p className="session-code">{session.id}</p>
             </div>
             <p className="share-copy">
-              Students go to the student panel and enter this code plus their name.
+              Students open the student page and enter this code plus their name.
             </p>
           </div>
 
@@ -300,11 +362,11 @@ const TeacherDashboard = () => {
               <p className="muted">Responses will appear here in real time.</p>
             ) : (
               summary.map((question) => (
-                <div className="summary-card" key={question.questionId}>
+                <div className="summary-card" key={question.questionId + '-summary'}>
                   <h4>{question.questionText}</h4>
                   <ul>
                     {question.counts.map((entry, optionIndex) => (
-                      <li key={`${question.questionId}-${optionIndex}`}>
+                      <li key={question.questionId + '-' + optionIndex}>
                         <span>{entry.option}</span>
                         <strong>{entry.count}</strong>
                       </li>
@@ -335,7 +397,7 @@ const TeacherDashboard = () => {
                       <tr key={answer.studentName}>
                         <td>{answer.studentName}</td>
                         {session.questions.map((question) => (
-                          <td key={`${answer.studentName}-${question.id}`}>
+                          <td key={answer.studentName + '-' + question.id}>
                             {getAnswerLabel(question, answer.responses?.[question.id])}
                           </td>
                         ))}
@@ -347,7 +409,9 @@ const TeacherDashboard = () => {
             )}
           </div>
         </div>
-      ) : null}
+      ) : (
+        <p className="muted">Launch or attach to a session to start monitoring responses.</p>
+      )}
     </div>
   );
 };

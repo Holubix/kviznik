@@ -1,88 +1,102 @@
-# Kvizník – Czech classroom quiz app
+# Kvizn�k � Czech classroom quiz app
 
-A lightweight classroom-response experience built for Czech teachers and students. Create quick multiple-choice quizzes, distribute a 6-character room code, and watch responses from 30+ students roll in live.
+A lightweight classroom-response experience built for Czech teachers and students. Teachers log in, create multiple-choice quizzes, and watch 30+ students submit answers in real time. Students only see the public workspace and never need an account.
 
 ## Features
 
-- **Rapid authoring** – add unlimited questions and up to six options per question.
-- **Instant sharing** – automatically generates a short session code for students.
-- **Student experience** – learners enter the code, see the quiz, and submit/update answers from any device.
-- **Live monitoring** – real-time aggregate counts per option plus an itemized table of student responses via WebSockets.
-- **In-memory storage** – perfect for quick sessions and demos (data resets whenever the API restarts).
+- **Separate teacher/student UIs** � `/teacher` is hidden behind a login, `/student` stays open for quick access.
+- **Database-backed auth** � credentials live in a SQLite database, seeded via script or env defaults.
+- **Rapid authoring** � add unlimited questions with up to six options each and instantly share a six-character room code.
+- **Live monitoring** � Socket.IO streams aggregate counts plus a per-student table (only visible to authenticated teachers).
+- **In-memory quiz storage** � great for quick sessions; restart the API to reset everything.
 
 ## Project structure
 
 ```
-kvizník/
-├── server/   # Express + Socket.IO API
-└── client/   # Vite + React front-end (teacher + student panels)
+kviznik/
++-- server/   # Express + Socket.IO API, SQLite auth store
++-- client/   # Vite + React SPA (home + teacher + student routes)
 ```
 
 ## Prerequisites
 
-- Node.js **20.19+** (or 22.12+) – newer Vite releases expect this minimum.
-- npm (bundled with Node).
+- Node.js **20.19+** (or >=22.12). Newer Vite releases expect this baseline.
+- npm (ships with Node).
 
-## Setup & running locally
+## Server setup
 
-1. **Install dependencies**
+1. **Install deps and configure `.env`**
    ```bash
    cd server
    npm install
-
-   cd ../client
-   npm install
    ```
+   Edit `server/.env` to set `PORT`, `JWT_SECRET`, `DB_PATH`, and default teacher credentials.
 
-2. **Run the API**
+2. **Seed a teacher user**
+   - Either set `ADMIN_USERNAME` + `ADMIN_PASSWORD` in `.env` before the first boot (the store auto-seeds once), **or** run the script:
+     ```bash
+     npm run create:teacher my-user my-secret
+     ```
+
+3. **Start the API**
    ```bash
-   cd server
-   npm run dev           # or: npm start
+   npm run dev   # or: npm start
    ```
-   The API listens on `http://localhost:4000` by default. You can change `PORT` via an environment variable.
+   Defaults to `http://localhost:5000`. Set `PORT=5000 npm run dev` to change. The SQLite file lives under `server/data/` unless you override `DB_PATH`.
 
-3. **Run the React client**
+## Client setup
+
+1. **Install deps & configure `.env`**
    ```bash
    cd client
-   cp .env.example .env  # optional: customize API base via VITE_API_URL
+   npm install
+   ```
+   Update `client/.env` so `VITE_API_URL` points at your API host/port.
+
+2. **Run the dev server**
+   ```bash
    npm run dev
    ```
-   Vite serves the UI at `http://localhost:5173`. The default `VITE_API_URL` expects the API on port 4000, but you can point it to any reachable host.
+   Open the printed URL (usually `http://localhost:5173`). Routes:
+   - `/` � landing page with quick links.
+   - `/teacher` � login ? session builder + live dashboard.
+   - `/student` � public workspace for entering a code and submitting answers.
 
-4. **Build for production (optional)**
+3. **Build for production (optional)**
    ```bash
-   cd client
    npm run build
-   npm run preview       # serve the production build locally
+   npm run preview
    ```
+   Deploy `client/dist` behind Nginx/Cloudflare while the Node API stays running.
 
-## Usage workflow
+## Teacher workflow
 
-1. **Teacher panel**
-   - Enter a session title and author your questions (at least two answer options each).
-   - Click **Launch Session** to create a room and reveal the 6-character code.
-   - Watch the **Live responses** section update instantly as students answer. The summary cards show per-option counts, and the table lists each student's answers.
+1. Sign in at `/teacher` using the seeded credentials.
+2. Create questions or attach to an existing room code.
+3. Share the code with students. The dashboard streams summaries plus a per-student table, and you can close a room via `DELETE /api/sessions/:code`.
 
-2. **Student panel**
-   - Type the session code and your name, then load the quiz.
-   - Select answers and submit. You can resubmit to change answers—teachers always see the latest choices.
+## Student workflow
 
-3. **Resetting / closing**
-   - Stopping the API process clears every in-memory session. An optional `DELETE /api/sessions/:id` endpoint is available if you want to expose a “close room” action later.
+1. Visit `/student`, enter the six-character code and a display name.
+2. Pick answers and submit. Students may resend answers anytime; teachers always see the latest responses.
 
-## API overview
+## API quick reference
 
-- `POST /api/sessions` – create a session `{ title, questions: [{ text, options[] }] }`.
-- `GET /api/sessions/:id` – fetch session details (questions, answers snapshot, summary counts).
-- `POST /api/sessions/:id/answers` – submit/update a student's answers.
-- `DELETE /api/sessions/:id` – close & remove a room (broadcasts `sessionClosed` over Socket.IO).
-- WebSocket event `joinSession` – subscribe to real-time updates for a session.
+- `POST /api/auth/login` � exchange username/password for a JWT.
+- `POST /api/sessions` *(auth)* � create a quiz session.
+- `GET /api/sessions/:code` � public questions for students.
+- `GET /api/teacher/sessions/:code` *(auth)* � teacher view (answers + summary).
+- `POST /api/sessions/:code/answers` � submit/update responses.
+- `DELETE /api/sessions/:code` *(auth)* � close a session and notify listeners.
+- Socket.IO: emit `joinSession` with `{ sessionId, token }` to stream live results (teachers only).
 
-> ⚠️ Persistence: responses live purely in memory. Deploy behind a process manager or add a database if you need durability beyond a single runtime.
+> ?? Quiz/answer data still lives in memory. Use an external store if you need persistence beyond a single Node process.
 
-## Scaling notes
+## Cloudflare Tunnel / Nginx notes
 
-- Each session was designed for classrooms (30+ concurrent students). Socket.IO fan-out keeps updates efficient for much larger groups.
-- Enable HTTPS + auth (not included) before exposing it to the public internet.
+- Serve the React build from Nginx, proxy `/api` and `/socket.io` to the Node port, then point Cloudflare Tunnel at the Nginx port (e.g., 90 if 80 is taken by CasaOS).
+- Ensure the Nginx worker (www-data) can read `client/dist` (`chmod o+rx` on `/home/tonda/Projects/kviznik/...`).
 
-Enjoy fast formative assessments! Contributions or enhancements (auth, persistence, richer question types) can plug into the existing API + React structure.
+Enjoy building Czech classroom quizzes with real-time insights!
+
+
